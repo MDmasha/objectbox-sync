@@ -1,0 +1,34 @@
+# Node.js
+node_modules/
+npm-debug.log
+
+# Jest
+coverage/
+/reports
+
+# Environment variables
+.env
+
+#DB
+.DS_Store
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# Gradle / Java
+.gradle/
+**/build/
+**/out/
+*.class
+*.log
+
+# ObjectBox runtime data (local DB on clients)
+**/objectbox/
+
+# ObjectBox model backups 
+**/objectbox-models/*.bak

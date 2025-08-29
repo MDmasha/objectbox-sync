@@ -27,6 +27,8 @@ import io.objectbox.sync.SyncCredentials;
 import io.objectbox.sync.listener.SyncChangeListener;
 import io.objectbox.sync.listener.SyncLoginListener;
 
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.List;
 import java.util.logging.Level;
@@ -36,17 +38,37 @@ public class TasksSyncDB {
 
     private final BoxStore tasksBoxStore;
     private final Box<Task> tasksBox;
-    private final String syncServerURL = "ws://127.0.0.1";
+    private final String syncServerURL = "ws://localhost:9999";
     private final Logger logger = Logger.getLogger(TasksSyncDB.class.getName());
     private final SyncClient syncClient;
+
+    // keep the token & derived email for use when creating tasks
+    private final String idToken;
+    private final String currentUserEmail;
 
     public TasksSyncDB() {
         logger.log(Level.INFO, String.format("Using ObjectBox %s (%s)", BoxStore.getVersion(), BoxStore.getVersionNative()));
         BoxStoreBuilder storeBuilder = MyObjectBox.builder().name("tasks-synced");
         this.tasksBoxStore = storeBuilder.build();
         this.tasksBox = this.tasksBoxStore.boxFor(Task.class);
+
+        // 1) Get JWT ID token from env (simplest for testing)
+        String token = System.getenv("OBX_ID_TOKEN");
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("Set OBX_ID_TOKEN environment variable to your JWT ID token (with an 'email' claim).");
+        }
+        this.idToken = token;
+
+        // 2) Derive the email claim -> must match your server filter: ownerEmail == $auth.email
+        this.currentUserEmail = jwtEmail(this.idToken);
+        logger.log(Level.INFO, "Authenticated as: " + this.currentUserEmail);
+
+        // 3) Start sync using JWT credentials
         logger.log(Level.INFO, "Starting client with " + syncServerURL);
-        this.syncClient = Sync.client(this.tasksBoxStore, syncServerURL, SyncCredentials.none()).loginListener(syncLoginListener).changeListener(syncChangeListener).buildAndStart();
+        this.syncClient = Sync.client(this.tasksBoxStore, syncServerURL, SyncCredentials.jwtIdToken(this.idToken))
+                .loginListener(syncLoginListener)
+                .changeListener(syncChangeListener)
+                .buildAndStart();
     }
 
     private final SyncChangeListener syncChangeListener = new SyncChangeListener() {
@@ -68,8 +90,9 @@ public class TasksSyncDB {
         }
     };
 
+    // Create a task tagged with the current user's email so it passes the server-side filter
     public long addTask(String text) {
-        Task task = new Task(text);
+        Task task = new Task(text, this.currentUserEmail);
         return tasksBox.put(task);
     }
 
@@ -78,14 +101,14 @@ public class TasksSyncDB {
     }
 
     public Task getTaskById(long id) {
-        return tasksBox.get(id) ;
+        return tasksBox.get(id);
     }
 
     public List<Task> getUnfinishedTasks() {
         try (Query<Task> query = tasksBox.query(
                 Task_.dateFinished.isNull()
                         .or(Task_.dateFinished.equal(new Date(0)))
-            ).build()) {
+        ).build()) {
             return query.find();
         }
     }
@@ -105,4 +128,24 @@ public class TasksSyncDB {
         this.tasksBoxStore.close();
     }
 
+    // --- helper: minimal JWT payload decoder to extract "email" ---
+    // (For production, use a real JWT library and verify signatures.)
+    private static String jwtEmail(String idToken) {
+        String[] parts = idToken.split("\\.");
+        if (parts.length < 2) throw new IllegalArgumentException("Invalid JWT: missing payload");
+        String payloadJson = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+
+        String marker = "\"email\":\"";
+        int i = payloadJson.indexOf(marker);
+        if (i < 0) {
+            throw new IllegalStateException(
+                "JWT 'email' claim missing. Either use an ID token with an email claim, " +
+                "or change your server filter to use a different claim (e.g., $auth.sub) " +
+                "and add a matching property (e.g., ownerSub) to Task."
+            );
+        }
+        int start = i + marker.length();
+        int end = payloadJson.indexOf('"', start);
+        return payloadJson.substring(start, end);
+    }
 }
