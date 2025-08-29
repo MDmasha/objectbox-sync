@@ -1,0 +1,12 @@
+{
+  "auth": {
+    "jwt": {
+      "publicKeyUrl": "https://obx-auth-demo.eu.auth0.com/.well-known/jwks.json",
+      "claimAud": "dfitML8r1fAlY68vf8XtoIqt3IFs5AGf",
+      "claimIss": "https://obx-auth-demo.eu.auth0.com/"
+    }
+  },
+  "syncFilters": {
+    "Task": "ownerEmail == $auth.email"
+  }
+}
